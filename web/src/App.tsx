@@ -32,6 +32,7 @@ const App = () => {
 			event: event,
 			content: data
 		  };
+		console.log('[emit]', aliveData)
 		socket?.send(JSON.stringify(aliveData));
 	}
 	const sendEventToSocket = (event: String, socket: WebSocket) => {
@@ -40,16 +41,17 @@ const App = () => {
 	}
 
 	const getCandidate = async (data: { candidate: RTCIceCandidateInit; candidateSendID: string }) => {
-		console.log('get candidate');
-		const pc: RTCPeerConnection = pcsRef.current[data.candidateSendID];
+		const { candidate, candidateSendID } = data;
+		console.log('get candidate', candidateSendID, pcsRef);
+		const pc: RTCPeerConnection = pcsRef.current[candidateSendID];
 		if (!pc) return;
-		await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+		await pc.addIceCandidate(new RTCIceCandidate(candidate));
 		console.log('candidate add success');
 	}
 
 	const createOffer = async (socket: WebSocket) => {
 		if (!localStreamRef.current) return;
-		const pc = createPeerConnection(myUUID.toString(), myUUID.toString());
+		const pc = createPeerConnection(myUUID.toString(), socket);
 		if (!(pc)) return;
 		pcsRef.current = { ...pcsRef.current, [myUUID.toString()]: pc };
 		try {
@@ -59,12 +61,7 @@ const App = () => {
 			});
 			console.log('create offer success');
 			await pc.setLocalDescription(new RTCSessionDescription(localSdp));
-
-			const sendData = {
-				type: 'offer',
-				sdp: localSdp,
-			};
-			emit("message", sendData, socket);
+			emit("message", localSdp, socket);
 		} catch (e) {
 			console.error(e);
 		}
@@ -99,9 +96,10 @@ const App = () => {
 	// 	}
 	// }
 
-	const getAnswer = (data: { sdp: RTCSessionDescription; answerSendID: string }) => {
+	const getAnswer = (
+		data: { sdp: RTCSessionDescription; answerSendID: string }) => {
 		const { sdp, answerSendID } = data;
-		console.log('get answer');
+		// console.log('get answer', sdp, answerSendID);
 		const pc: RTCPeerConnection = pcsRef.current[answerSendID];
 		if (!pc) return;
 		pc.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -144,7 +142,23 @@ const App = () => {
 				case 'message':
 					// onMessage
 					console.log('[onMessage] ', msg);
-					getAnswer(data);
+					if (msg.content.type === 'answer') {
+						// get Answer 
+						console.log('[onMessage:Answer] ', msg);
+						const answerData = {
+							sdp: msg.content.sdp,
+							answerSendID: msg.from.toString(),
+						}
+						getAnswer(answerData);
+					}
+					else if (msg.content.type === 'candidate') {
+						console.log('[onMessage:candidate] ', msg);
+						const candidateData = {
+							candidate: msg.content.candidate,
+							candidateSendID: msg.from.toString(),
+						}
+						getCandidate(candidateData);
+					}
 					break;
 				default:
 					console.log('[Server Msg] ', msg);
@@ -180,28 +194,25 @@ const App = () => {
 			});
 			localStreamRef.current = localStream;
 			if (localVideoRef.current) localVideoRef.current.srcObject = localStream;
-			if (!socketRef.current) return;
-			socketRef.current.emit('join_room', {
-				room: '1234',
-				email: 'sample@naver.com',
-			});
 		} catch (e) {
 			console.log(`getUserMedia error: ${e}`);
 		}
 	}, []);
 
-	const createPeerConnection = useCallback((socketID: string, email: string) => {
+	const createPeerConnection = useCallback((uuid: string, socket: WebSocket) => {
 		try {
 			const pc = new RTCPeerConnection(pc_config);
 
 			pc.onicecandidate = (e) => {
-				if (!(socketRef.current && e.candidate)) return;
-				console.log('onicecandidate');
-				socketRef.current.emit('candidate', {
-					candidate: e.candidate,
-					candidateSendID: socketRef.current.id,
-					candidateReceiveID: socketID,
-				});
+				console.log('[onIceCandidate]', e);
+				if (!e.candidate) return;
+				const candidateData = {
+					type: 'candidate',
+					candidate: e.candidate.candidate,	
+					id: e.candidate.sdpMid,
+					label: e.candidate.sdpMLineIndex,
+				}
+				emit("message", candidateData, socket);
 			};
 
 			pc.oniceconnectionstatechange = (e) => {
@@ -212,10 +223,10 @@ const App = () => {
 				console.log('ontrack success');
 				setUsers((oldUsers) =>
 					oldUsers
-						.filter((user) => user.id !== socketID)
+						.filter((user) => user.id !== uuid)
 						.concat({
-							id: socketID,
-							email,
+							id: uuid,
+							uuid,
 							stream: e.streams[0],
 						}),
 				);
@@ -355,7 +366,7 @@ const App = () => {
 				autoPlay
 			/>
 			{users.map((user, index) => (
-				<Video key={index} email={user.email} stream={user.stream} />
+				<Video key={index} uuid={user.uuid} stream={user.stream} />
 			))}
 		</div>
 	);
