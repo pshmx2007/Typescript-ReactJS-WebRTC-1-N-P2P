@@ -4,6 +4,12 @@ import { WebRTCUser } from './types';
 import {v4 as uuidv4} from 'uuid';
 import { createModifiersFromModifierFlags } from 'typescript';
 
+interface RTCIceCandidateFP {
+    candidate?: string;
+    id?: string | null;
+    label?: 0 | null;
+}
+
 const pc_config = {
 	iceServers: [
 		// {
@@ -40,12 +46,16 @@ const App = () => {
 		emit(event, "", socket);
 	}
 
-	const getCandidate = async (data: { candidate: RTCIceCandidateInit; candidateSendID: string }) => {
-		const { candidate, candidateSendID } = data;
-		console.log('get candidate', candidateSendID, pcsRef);
-		const pc: RTCPeerConnection = pcsRef.current[candidateSendID];
+	const getCandidate = async (data: { candidate: string; candidateSendID: string; sdpMid: string; sdpMLineIndex: number; }) => {
+		const { candidate, candidateSendID, sdpMid, sdpMLineIndex } = data;
+		console.log('get candidate', candidateSendID, candidate, pcsRef);
+		const pc: RTCPeerConnection = pcsRef.current[myUUID.toString()];
 		if (!pc) return;
-		await pc.addIceCandidate(new RTCIceCandidate(candidate));
+		await pc.addIceCandidate(new RTCIceCandidate({
+			candidate: candidate,
+			sdpMid: sdpMid,
+			sdpMLineIndex: sdpMLineIndex,
+		  }));
 		console.log('candidate add success');
 	}
 
@@ -96,13 +106,21 @@ const App = () => {
 	// 	}
 	// }
 
-	const getAnswer = (
-		data: { sdp: RTCSessionDescription; answerSendID: string }) => {
+	const getAnswer = async (
+		data: { sdp: string; answerSendID: string }) => {
 		const { sdp, answerSendID } = data;
-		// console.log('get answer', sdp, answerSendID);
-		const pc: RTCPeerConnection = pcsRef.current[answerSendID];
-		if (!pc) return;
-		pc.setRemoteDescription(new RTCSessionDescription(sdp));
+		console.log('get answer', sdp, answerSendID);
+		const pc: RTCPeerConnection = pcsRef.current[myUUID.toString()];
+		if(!pc) {
+			console.log('[GetAnswer] error, pc is null');
+			return;
+		}
+
+		const initData: RTCSessionDescriptionInit = {
+			type: 'answer',
+			sdp: sdp,
+		}
+		await pc.setRemoteDescription(new RTCSessionDescription(initData));
 	}
 
 	useEffect(() => {
@@ -149,6 +167,9 @@ const App = () => {
 							sdp: msg.content.sdp,
 							answerSendID: msg.from.toString(),
 						}
+						
+						const newPc = createPeerConnection(msg.from.toString(), webSocket);
+						pcsRef.current = { ...pcsRef.current, [msg.from.toString()]: newPc };
 						getAnswer(answerData);
 					}
 					else if (msg.content.type === 'candidate') {
@@ -156,6 +177,8 @@ const App = () => {
 						const candidateData = {
 							candidate: msg.content.candidate,
 							candidateSendID: msg.from.toString(),
+							sdpMid: msg.content.id,
+							sdpMLineIndex: msg.content.label,
 						}
 						getCandidate(candidateData);
 					}
@@ -188,8 +211,8 @@ const App = () => {
 			const localStream = await navigator.mediaDevices.getDisplayMedia({
 				audio: true,
 				video: {
-					width: 240,
-					height: 240,
+					width: 1920,
+					height: 1080,
 				},
 			});
 			localStreamRef.current = localStream;
@@ -220,16 +243,17 @@ const App = () => {
 			};
 
 			pc.ontrack = (e) => {
-				console.log('ontrack success');
-				setUsers((oldUsers) =>
-					oldUsers
+				console.log('ontrack success', e);
+				setUsers((oldUsers) => {
+					console.log(oldUsers);
+					return oldUsers
 						.filter((user) => user.id !== uuid)
 						.concat({
 							id: uuid,
 							uuid,
 							stream: e.streams[0],
-						}),
-				);
+						});
+					});
 			};
 
 			if (localStreamRef.current) {
@@ -365,9 +389,10 @@ const App = () => {
 				ref={localVideoRef}
 				autoPlay
 			/>
-			{users.map((user, index) => (
-				<Video key={index} uuid={user.uuid} stream={user.stream} />
-			))}
+			{users.map((user, index) => {
+				console.log('[In Video Array], ', user);
+				return <Video key={index} uuid={user.uuid} stream={user.stream} />
+			})}
 		</div>
 	);
 };
