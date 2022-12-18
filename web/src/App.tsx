@@ -244,16 +244,19 @@ const App = () => {
 
 			pc.ontrack = (e) => {
 				console.log('ontrack success', e);
-				setUsers((oldUsers) => {
-					console.log(oldUsers);
-					return oldUsers
-						.filter((user) => user.id !== uuid)
-						.concat({
-							id: uuid,
-							uuid,
-							stream: e.streams[0],
+				if(e.track.kind === 'video') {
+					setUsers((oldUsers) => {
+						console.log(oldUsers);
+						return oldUsers
+							.filter((user) => user.id !== uuid)
+							.concat({
+								id: uuid,
+								uuid,
+								stream: e.streams[0],
+							});
 						});
-					});
+				}
+				
 			};
 
 			if (localStreamRef.current) {
